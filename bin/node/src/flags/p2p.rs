@@ -267,16 +267,16 @@ impl P2PArgs {
             }
         }
 
-        if let Some(path) = self.priv_path.as_ref() {
-            if path.exists() {
-                let contents = std::fs::read_to_string(path).ok()?;
-                let decoded = B256::from_str(&contents).ok()?;
-                match PrivateKeySigner::from_bytes(&decoded) {
-                    Ok(signer) => return Some(signer),
-                    Err(e) => {
-                        tracing::error!(target: "p2p::flags", "Failed to parse private key from file: {}", e);
-                        return None;
-                    }
+        if let Some(path) = self.priv_path.as_ref() &&
+            path.exists()
+        {
+            let contents = std::fs::read_to_string(path).ok()?;
+            let decoded = B256::from_str(&contents).ok()?;
+            match PrivateKeySigner::from_bytes(&decoded) {
+                Ok(signer) => return Some(signer),
+                Err(e) => {
+                    tracing::error!(target: "p2p::flags", "Failed to parse private key from file: {}", e);
+                    return None;
                 }
             }
         }

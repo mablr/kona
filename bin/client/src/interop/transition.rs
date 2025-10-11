@@ -37,15 +37,15 @@ where
     <Evm as EvmFactory>::Tx: FromTxWithEncoded<OpTxEnvelope> + FromRecoveredTx<OpTxEnvelope>,
 {
     // Check if we can short-circuit the transition, if we are within padding.
-    if let PreState::TransitionState(ref transition_state) = boot.agreed_pre_state {
-        if transition_state.step >= transition_state.pre_state.output_roots.len() as u64 {
-            info!(
-                target: "interop_client",
-                "No derivation/execution required, transition state is already saturated."
-            );
+    if let PreState::TransitionState(ref transition_state) = boot.agreed_pre_state &&
+        transition_state.step >= transition_state.pre_state.output_roots.len() as u64
+    {
+        info!(
+            target: "interop_client",
+            "No derivation/execution required, transition state is already saturated."
+        );
 
-            return transition_and_check(boot.agreed_pre_state, None, boot.claimed_post_state);
-        }
+        return transition_and_check(boot.agreed_pre_state, None, boot.claimed_post_state);
     }
 
     // Fetch the L2 block hash of the current safe head.

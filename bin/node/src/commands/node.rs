@@ -360,10 +360,10 @@ impl NodeCommand {
     /// using the provided [PathBuf]. If the file is not found,
     /// it will return the default JWT secret.
     pub fn jwt_secret(&self) -> Option<JwtSecret> {
-        if let Some(path) = &self.l2_engine_jwt_secret {
-            if let Ok(secret) = std::fs::read_to_string(path) {
-                return JwtSecret::from_hex(secret).ok();
-            }
+        if let Some(path) = &self.l2_engine_jwt_secret &&
+            let Ok(secret) = std::fs::read_to_string(path)
+        {
+            return JwtSecret::from_hex(secret).ok();
         }
         Self::default_jwt_secret()
     }
@@ -377,12 +377,11 @@ impl NodeCommand {
             |_| {
                 use std::io::Write;
                 let secret = JwtSecret::random();
-                if let Ok(mut file) = File::create("jwt.hex") {
-                    if let Err(e) =
-                        file.write_all(alloy_primitives::hex::encode(secret.as_bytes()).as_bytes())
-                    {
-                        tracing::error!("Failed to write JWT secret to file: {:?}", e);
-                    }
+                if let Ok(mut file) = File::create("jwt.hex") &&
+                    let Err(e) = file
+                        .write_all(alloy_primitives::hex::encode(secret.as_bytes()).as_bytes())
+                {
+                    tracing::error!("Failed to write JWT secret to file: {:?}", e);
                 }
                 Some(secret)
             },
