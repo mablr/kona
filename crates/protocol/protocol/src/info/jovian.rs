@@ -1,9 +1,9 @@
 //! Jovian L1 Block Info transaction types.
 
 use alloc::vec::Vec;
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes};
 
-use crate::DecodeError;
+use crate::{DecodeError, L1BlockInfoIsthmus};
 
 /// Represents the fields within an Jovian L1 block info transaction.
 ///
@@ -69,22 +69,75 @@ impl L1BlockInfoJovian {
     /// Those are the first 4 calldata bytes -> `<https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/l1-attributes.md#overview>`
     pub const L1_INFO_TX_SELECTOR: [u8; 4] = [0x3d, 0xb6, 0xbe, 0x2b];
 
+    /// Converts this Jovian info to an Isthmus info (parent hardfork).
+    ///
+    /// This is useful for encoding/decoding the common fields that are shared
+    /// between Isthmus and Jovian.
+    fn to_isthmus(&self) -> L1BlockInfoIsthmus {
+        L1BlockInfoIsthmus {
+            number: self.number,
+            time: self.time,
+            base_fee: self.base_fee,
+            block_hash: self.block_hash,
+            sequence_number: self.sequence_number,
+            batcher_address: self.batcher_address,
+            blob_base_fee: self.blob_base_fee,
+            blob_base_fee_scalar: self.blob_base_fee_scalar,
+            base_fee_scalar: self.base_fee_scalar,
+            operator_fee_scalar: self.operator_fee_scalar,
+            operator_fee_constant: self.operator_fee_constant,
+        }
+    }
+
+    /// Creates a Jovian info from an Isthmus info and Jovian-specific fields.
+    fn from_isthmus(isthmus: L1BlockInfoIsthmus, da_footprint_gas_scalar: u16) -> Self {
+        Self {
+            number: isthmus.number,
+            time: isthmus.time,
+            base_fee: isthmus.base_fee,
+            block_hash: isthmus.block_hash,
+            sequence_number: isthmus.sequence_number,
+            batcher_address: isthmus.batcher_address,
+            blob_base_fee: isthmus.blob_base_fee,
+            blob_base_fee_scalar: isthmus.blob_base_fee_scalar,
+            base_fee_scalar: isthmus.base_fee_scalar,
+            operator_fee_scalar: isthmus.operator_fee_scalar,
+            operator_fee_constant: isthmus.operator_fee_constant,
+            da_footprint_gas_scalar,
+        }
+    }
+
+    /// Encodes the Jovian-specific fields into a buffer.
+    ///
+    /// This should be called after encoding the base Isthmus fields.
+    pub(crate) fn encode_jovian_fields(&self, buf: &mut Vec<u8>) {
+        buf.extend_from_slice(self.da_footprint_gas_scalar.to_be_bytes().as_ref());
+    }
+
+    /// Decodes the Jovian-specific fields from calldata.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `r` is at least 178 bytes long.
+    pub(crate) fn decode_jovian_fields(r: &[u8]) -> u16 {
+        // SAFETY: 2 bytes are copied directly into the array
+        let mut da_footprint_gas_scalar = [0u8; 2];
+        da_footprint_gas_scalar.copy_from_slice(&r[176..178]);
+        u16::from_be_bytes(da_footprint_gas_scalar)
+    }
+
     /// Encodes the [`L1BlockInfoJovian`] object into Ethereum transaction calldata.
     pub fn encode_calldata(&self) -> Bytes {
-        let mut buf = Vec::with_capacity(Self::L1_INFO_TX_LEN);
-        buf.extend_from_slice(Self::L1_INFO_TX_SELECTOR.as_ref());
-        buf.extend_from_slice(self.base_fee_scalar.to_be_bytes().as_ref());
-        buf.extend_from_slice(self.blob_base_fee_scalar.to_be_bytes().as_ref());
-        buf.extend_from_slice(self.sequence_number.to_be_bytes().as_ref());
-        buf.extend_from_slice(self.time.to_be_bytes().as_ref());
-        buf.extend_from_slice(self.number.to_be_bytes().as_ref());
-        buf.extend_from_slice(U256::from(self.base_fee).to_be_bytes::<32>().as_ref());
-        buf.extend_from_slice(U256::from(self.blob_base_fee).to_be_bytes::<32>().as_ref());
-        buf.extend_from_slice(self.block_hash.as_ref());
-        buf.extend_from_slice(self.batcher_address.into_word().as_ref());
-        buf.extend_from_slice(self.operator_fee_scalar.to_be_bytes().as_ref());
-        buf.extend_from_slice(self.operator_fee_constant.to_be_bytes().as_ref());
-        buf.extend_from_slice(self.da_footprint_gas_scalar.to_be_bytes().as_ref());
+        // Start with Isthmus fields (which includes Ecotone base fields)
+        let isthmus = self.to_isthmus();
+        let mut buf = isthmus.encode_calldata().to_vec();
+
+        // Replace the selector with Jovian selector
+        buf[0..4].copy_from_slice(&Self::L1_INFO_TX_SELECTOR);
+
+        // Add Jovian-specific fields
+        self.encode_jovian_fields(&mut buf);
+
         buf.into()
     }
 
@@ -97,73 +150,15 @@ impl L1BlockInfoJovian {
         // SAFETY: For all below slice operations, the full
         //         length is validated above to be `178`.
 
-        // SAFETY: 4 bytes are copied directly into the array
-        let mut base_fee_scalar = [0u8; 4];
-        base_fee_scalar.copy_from_slice(&r[4..8]);
-        let base_fee_scalar = u32::from_be_bytes(base_fee_scalar);
+        // Decode base Isthmus fields (which includes Ecotone base fields)
+        // We can reuse Isthmus decoding for the first 176 bytes
+        let isthmus = L1BlockInfoIsthmus::decode_calldata(&r[..L1BlockInfoIsthmus::L1_INFO_TX_LEN])
+            .map_err(|_| DecodeError::InvalidJovianLength(Self::L1_INFO_TX_LEN, r.len()))?;
 
-        // SAFETY: 4 bytes are copied directly into the array
-        let mut blob_base_fee_scalar = [0u8; 4];
-        blob_base_fee_scalar.copy_from_slice(&r[8..12]);
-        let blob_base_fee_scalar = u32::from_be_bytes(blob_base_fee_scalar);
+        // Decode Jovian-specific fields
+        let da_footprint_gas_scalar = Self::decode_jovian_fields(r);
 
-        // SAFETY: 8 bytes are copied directly into the array
-        let mut sequence_number = [0u8; 8];
-        sequence_number.copy_from_slice(&r[12..20]);
-        let sequence_number = u64::from_be_bytes(sequence_number);
-
-        // SAFETY: 8 bytes are copied directly into the array
-        let mut time = [0u8; 8];
-        time.copy_from_slice(&r[20..28]);
-        let time = u64::from_be_bytes(time);
-
-        // SAFETY: 8 bytes are copied directly into the array
-        let mut number = [0u8; 8];
-        number.copy_from_slice(&r[28..36]);
-        let number = u64::from_be_bytes(number);
-
-        // SAFETY: 8 bytes are copied directly into the array
-        let mut base_fee = [0u8; 8];
-        base_fee.copy_from_slice(&r[60..68]);
-        let base_fee = u64::from_be_bytes(base_fee);
-
-        // SAFETY: 16 bytes are copied directly into the array
-        let mut blob_base_fee = [0u8; 16];
-        blob_base_fee.copy_from_slice(&r[84..100]);
-        let blob_base_fee = u128::from_be_bytes(blob_base_fee);
-
-        let block_hash = B256::from_slice(r[100..132].as_ref());
-        let batcher_address = Address::from_slice(r[144..164].as_ref());
-
-        // SAFETY: 4 bytes are copied directly into the array
-        let mut operator_fee_scalar = [0u8; 4];
-        operator_fee_scalar.copy_from_slice(&r[164..168]);
-        let operator_fee_scalar = u32::from_be_bytes(operator_fee_scalar);
-
-        // SAFETY: 8 bytes are copied directly into the array
-        let mut operator_fee_constant = [0u8; 8];
-        operator_fee_constant.copy_from_slice(&r[168..176]);
-        let operator_fee_constant = u64::from_be_bytes(operator_fee_constant);
-
-        // SAFETY: 2 bytes are copied directly into the array
-        let mut da_footprint_gas_scalar = [0u8; 2];
-        da_footprint_gas_scalar.copy_from_slice(&r[176..178]);
-        let da_footprint_gas_scalar = u16::from_be_bytes(da_footprint_gas_scalar);
-
-        Ok(Self {
-            number,
-            time,
-            base_fee,
-            block_hash,
-            sequence_number,
-            batcher_address,
-            blob_base_fee,
-            blob_base_fee_scalar,
-            base_fee_scalar,
-            operator_fee_scalar,
-            operator_fee_constant,
-            da_footprint_gas_scalar,
-        })
+        Ok(Self::from_isthmus(isthmus, da_footprint_gas_scalar))
     }
 }
 

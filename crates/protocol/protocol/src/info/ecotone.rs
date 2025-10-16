@@ -63,8 +63,15 @@ impl L1BlockInfoEcotone {
     /// The 4 byte selector of "setL1BlockValuesEcotone()"
     pub const L1_INFO_TX_SELECTOR: [u8; 4] = [0x44, 0x0a, 0x5e, 0x20];
 
-    /// Encodes the [`L1BlockInfoEcotone`] object into Ethereum transaction calldata.
-    pub fn encode_calldata(&self) -> Bytes {
+    /// Encodes the common fields shared with later hardforks into a buffer.
+    ///
+    /// This encodes the selector and all common L1 block fields that are shared
+    /// across Ecotone, Isthmus, and Interop hardforks.
+    ///
+    /// # Returns
+    ///
+    /// Returns a buffer with the selector and common fields encoded.
+    pub(crate) fn encode_base_fields(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(Self::L1_INFO_TX_LEN);
         buf.extend_from_slice(Self::L1_INFO_TX_SELECTOR.as_ref());
 
@@ -81,23 +88,21 @@ impl L1BlockInfoEcotone {
         };
         common.encode_into(&mut buf);
 
-        // Notice: do not include the `empty_scalars` field in the calldata.
-        // Notice: do not include the `l1_fee_overhead` field in the calldata.
-        buf.into()
+        buf
     }
 
-    /// Decodes the [`L1BlockInfoEcotone`] object from ethereum transaction calldata.
-    pub fn decode_calldata(r: &[u8]) -> Result<Self, DecodeError> {
-        if r.len() != Self::L1_INFO_TX_LEN {
-            return Err(DecodeError::InvalidEcotoneLength(Self::L1_INFO_TX_LEN, r.len()));
-        }
-
-        // SAFETY: For all below slice operations, the full
-        //         length is validated above to be `164`.
-
+    /// Decodes the common fields from calldata into an [`L1BlockInfoEcotone`] object.
+    ///
+    /// This decodes the common L1 block fields that are shared across Ecotone,
+    /// Isthmus, and Interop hardforks.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `r` is at least 164 bytes long.
+    pub(crate) fn decode_base_fields(r: &[u8]) -> Self {
         let common = CommonL1BlockFields::decode_from(r);
 
-        Ok(Self {
+        Self {
             number: common.number,
             time: common.time,
             base_fee: common.base_fee,
@@ -113,7 +118,27 @@ impl L1BlockInfoEcotone {
             empty_scalars: false,
             // Notice: the `l1_fee_overhead` field is not included in the calldata.
             l1_fee_overhead: U256::ZERO,
-        })
+        }
+    }
+
+    /// Encodes the [`L1BlockInfoEcotone`] object into Ethereum transaction calldata.
+    pub fn encode_calldata(&self) -> Bytes {
+        let buf = self.encode_base_fields();
+        // Notice: do not include the `empty_scalars` field in the calldata.
+        // Notice: do not include the `l1_fee_overhead` field in the calldata.
+        buf.into()
+    }
+
+    /// Decodes the [`L1BlockInfoEcotone`] object from ethereum transaction calldata.
+    pub fn decode_calldata(r: &[u8]) -> Result<Self, DecodeError> {
+        if r.len() != Self::L1_INFO_TX_LEN {
+            return Err(DecodeError::InvalidEcotoneLength(Self::L1_INFO_TX_LEN, r.len()));
+        }
+
+        // SAFETY: For all below slice operations, the full
+        //         length is validated above to be `164`.
+
+        Ok(Self::decode_base_fields(r))
     }
 }
 
